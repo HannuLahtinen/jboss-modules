@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1072,7 +1073,11 @@ public final class Module {
                 final ModuleLoader moduleLoader = moduleDependency.getModuleLoader();
                 final ModuleIdentifier id = moduleDependency.getIdentifier();
                 final Module module;
-
+                // set to keep track of visited module dependencies to skip re-visiting circular dependencies
+                // TODO: Should the set be thread-safe?
+                // TODO: Is ModuleDependency the correct type when considering its equals method in Set.contains calls?
+                final Set<ModuleDependency> visitedDependencies = new HashSet<>();
+                visitedDependencies.add(moduleDependency);
                 try {
                     long pauseStart = Metrics.getCurrentCPUTime();
                     try {
@@ -1119,7 +1124,7 @@ public final class Module {
                     nestedResourceFilters = resourceFilterStack.clone();
                     if (resourceImportFilter != PathFilters.acceptAll()) nestedResourceFilters.add(resourceImportFilter);
                 }
-                subtract += module.addExportedPaths(module.getDependenciesInternal(), map, nestedFilters, nestedClassFilters, nestedResourceFilters, visited);
+                subtract += module.addExportedPaths(module.getDependenciesInternal(), map, nestedFilters, nestedClassFilters, nestedResourceFilters, visited, visitedDependencies);
             } else if (dependency instanceof ModuleClassLoaderDependency) {
                 final ModuleClassLoaderDependency classLoaderDependency = (ModuleClassLoaderDependency) dependency;
                 LocalLoader localLoader = classLoaderDependency.getLocalLoader();
@@ -1208,7 +1213,7 @@ public final class Module {
             return LocalLoaders.createClassFilteredLocalLoader(filter, localLoader);
     }
 
-    private long addExportedPaths(Dependency[] dependencies, Map<String, List<LocalLoader>> map, FastCopyHashSet<PathFilter> filterStack, FastCopyHashSet<ClassFilter> classFilterStack, final FastCopyHashSet<PathFilter> resourceFilterStack, Set<Visited> visited) throws ModuleLoadException {
+    private long addExportedPaths(Dependency[] dependencies, Map<String, List<LocalLoader>> map, FastCopyHashSet<PathFilter> filterStack, FastCopyHashSet<ClassFilter> classFilterStack, final FastCopyHashSet<PathFilter> resourceFilterStack, Set<Visited> visited, Set<ModuleDependency> visitedDependencies) throws ModuleLoadException {
         if (!visited.add(new Visited(this, filterStack, classFilterStack, resourceFilterStack))) {
             return 0L;
         }
@@ -1220,6 +1225,11 @@ public final class Module {
             if (exportFilter != PathFilters.rejectAll()) {
                 if (dependency instanceof ModuleDependency) {
                     final ModuleDependency moduleDependency = (ModuleDependency) dependency;
+                    // prevent re-visiting circular module dependencies
+                    if (!visitedDependencies.add(moduleDependency)) {
+                        // already visited the dependency, skip it
+                        continue;
+                    }
                     final ModuleLoader moduleLoader = moduleDependency.getModuleLoader();
                     final ModuleIdentifier id = moduleDependency.getIdentifier();
                     final Module module;
@@ -1275,7 +1285,7 @@ public final class Module {
                         if (resourceImportFilter != PathFilters.acceptAll()) nestedResourceFilters.add(resourceImportFilter);
                         if (resourceExportFilter != PathFilters.acceptAll()) nestedResourceFilters.add(resourceExportFilter);
                     }
-                    subtract += module.addExportedPaths(module.getDependenciesInternal(), map, nestedFilters, nestedClassFilters, nestedResourceFilters, visited);
+                    subtract += module.addExportedPaths(module.getDependenciesInternal(), map, nestedFilters, nestedClassFilters, nestedResourceFilters, visited, visitedDependencies);
                 } else if (dependency instanceof ModuleClassLoaderDependency) {
                     final ModuleClassLoaderDependency classLoaderDependency = (ModuleClassLoaderDependency) dependency;
                     LocalLoader localLoader = classLoaderDependency.getLocalLoader();
